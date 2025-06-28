@@ -1,2020 +1,516 @@
 "use client"
-import { useEffect, useState } from "react"
+
+import { useState, useEffect, useCallback } from "react"
 import { createClient } from "@supabase/supabase-js"
 
-// Supabase client menggunakan environment variables
-const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
+// Supabase configuration
+const supabaseUrl = "https://lotjsowqvlkfunocrbnd.supabase.co"
+const supabaseKey =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxvdGpzb3dxdmxrZnVub2NyYm5kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDg4MzUxMzUsImV4cCI6MjA2NDQxMTEzNX0.JsvnBMTo4xbT2W9V4FZ0Odh3FDA20hnSg-pBpVUAanM"
+const supabase = createClient(supabaseUrl, supabaseKey)
 
-interface AbsensiRecord {
-  username: string
+interface AttendanceRecord {
+  id: number
   nama: string
   tanggal: string
+  jam_masuk: string
+  jam_keluar: string | null
   status: string
-  jam_masuk?: string
-  created_at?: string
+  keterangan: string | null
 }
 
-interface RekapData {
+interface EmployeeStats {
   nama: string
-  jumlahHadir: number
-  jumlahTidakHadir: number
-  persentaseHadir: number
+  totalHadir: number
+  totalTerlambat: number
+  totalAlpha: number
+  totalIzin: number
+  totalSakit: number
+  persentaseKehadiran: number
+  avgJamMasuk: string
+  totalWorkingDays: number
+  performanceScore: number
+  rank: number
 }
 
-export default function PresensiDashboard() {
-  const [hadirHariIni, setHadirHariIni] = useState<AbsensiRecord[]>([])
-  const [rekap, setRekap] = useState<RekapData[]>([])
-  const [isRefreshing, setIsRefreshing] = useState(false)
-  const [bulan, setBulan] = useState<number>(new Date().getMonth())
-  const [tahun, setTahun] = useState<number>(new Date().getFullYear())
-  const [today, setToday] = useState("")
-  const [currentTime, setCurrentTime] = useState(new Date())
-  const [scrollY, setScrollY] = useState(0)
-  const [isMobile, setIsMobile] = useState(false)
+export default function Dashboard() {
+  const [attendanceData, setAttendanceData] = useState<AttendanceRecord[]>([])
+  const [employeeStats, setEmployeeStats] = useState<EmployeeStats[]>([])
+  const [loading, setLoading] = useState(true)
+  const [selectedMonth, setSelectedMonth] = useState("")
+  const [selectedYear, setSelectedYear] = useState("")
 
-  const bulanNama = new Date(tahun, bulan).toLocaleString("id-ID", { month: "long" })
-
-  // Handle mobile detection safely
+  // Detect mobile screen size
   useEffect(() => {
     const checkMobile = () => {
-      setIsMobile(window.innerWidth <= 768)
+      // Mobile detection logic can be added here if needed
+      // setIsMobile(window.innerWidth < 768)
     }
 
+    // Check on mount
     checkMobile()
+
+    // Add event listener
     window.addEventListener("resize", checkMobile)
+
+    // Cleanup
     return () => window.removeEventListener("resize", checkMobile)
   }, [])
 
-  // Handle scroll for navbar
   useEffect(() => {
-    const handleScroll = () => setScrollY(window.scrollY)
-    window.addEventListener("scroll", handleScroll)
-    return () => window.removeEventListener("scroll", handleScroll)
+    const currentDate = new Date()
+    setSelectedMonth(String(currentDate.getMonth() + 1).padStart(2, "0"))
+    setSelectedYear(String(currentDate.getFullYear()))
   }, [])
 
-  // Update current time every second
-  useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000)
-    return () => clearInterval(timer)
-  }, [])
-
-  useEffect(() => {
-    const now = new Date()
-    setToday(now.toISOString().split("T")[0])
-  }, [])
-
-  useEffect(() => {
-    if (!today) return
-    fetchHadirHariIni()
-  }, [today])
-
-  useEffect(() => {
-    fetchRekap()
-  }, [bulan, tahun])
-
-  const fetchHadirHariIni = async () => {
-    setIsRefreshing(true)
+  const fetchAttendanceData = useCallback(async () => {
     try {
-      const { data: hadirData, error } = await supabase
-        .from("absensi")
+      setLoading(true)
+      const { data, error } = await supabase
+        .from("presensi")
         .select("*")
-        .eq("tanggal", today)
-        .eq("status", "HADIR")
-        .order("id", { ascending: true })
+        .gte("tanggal", `${selectedYear}-${selectedMonth}-01`)
+        .lt("tanggal", `${selectedYear}-${String(Number.parseInt(selectedMonth) + 1).padStart(2, "0")}-01`)
+        .order("tanggal", { ascending: false })
 
-      if (error) {
-        console.error("Error fetching attendance:", error)
-        setHadirHariIni([])
-        return
-      }
-
-      const processedData =
-        hadirData?.map((item) => ({
-          ...item,
-          nama: item.nama.toUpperCase(),
-          jam_masuk:
-            item.jam_masuk ??
-            (item.created_at
-              ? new Date(item.created_at).toLocaleTimeString("id-ID", {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })
-              : "-"),
-        })) || []
-
-      processedData.sort((a, b) => a.nama.localeCompare(b.nama))
-      setHadirHariIni(processedData)
-    } catch (err) {
-      console.error("Catch error:", err)
-      setHadirHariIni([])
-    } finally {
-      setIsRefreshing(false)
-    }
-  }
-
-  const fetchRekap = async () => {
-    const startDate = new Date(tahun, bulan, 1).toISOString().split("T")[0]
-    const endDate = new Date(tahun, bulan + 1, 0).toISOString().split("T")[0]
-
-    try {
-      const { data: semuaUser } = await supabase.from("users").select("*")
-      const { data: semuaAbsen } = await supabase
-        .from("absensi")
-        .select("*")
-        .gte("tanggal", startDate)
-        .lte("tanggal", endDate)
-
-      const hasil = semuaUser?.map((u) => {
-        const userAbsen = semuaAbsen?.filter((a) => a.username === u.username) || []
-        const jumlahHadir = userAbsen.filter((a) => a.status === "HADIR").length
-        const jumlahTidakHadir = userAbsen.filter((a) => a.status === "TIDAK_HADIR").length
-        const totalAbsensi = jumlahHadir + jumlahTidakHadir
-        const persentaseHadir = totalAbsensi > 0 ? Math.round((jumlahHadir / totalAbsensi) * 100) : 0
-
-        return {
-          nama: u.nama.toUpperCase(),
-          jumlahHadir,
-          jumlahTidakHadir,
-          persentaseHadir,
-        }
-      })
-
-      hasil?.sort((a, b) => a.nama.localeCompare(b.nama))
-      setRekap(hasil || [])
+      if (error) throw error
+      setAttendanceData(data || [])
+      calculateEmployeeStats(data || [])
     } catch (error) {
-      console.error("Error fetching rekap:", error)
-      setRekap([])
+      console.error("Error fetching data:", error)
+    } finally {
+      setLoading(false)
     }
-  }
+  }, [selectedMonth, selectedYear])
 
-  const navigateBulan = (direction: "prev" | "next") => {
-    if (direction === "prev") {
-      if (bulan === 0) {
-        setBulan(11)
-        setTahun(tahun - 1)
-      } else {
-        setBulan(bulan - 1)
+  const calculateEmployeeStats = useCallback((data: AttendanceRecord[]) => {
+    const employeeMap = new Map<string, any>()
+
+    // Get working days in selected month
+    const daysInMonth = new Date(Number.parseInt(selectedYear), Number.parseInt(selectedMonth), 0).getDate()
+    const workingDays = Math.floor(daysInMonth * 0.75) // Assuming ~75% are working days
+
+    data.forEach((record) => {
+      const nama = record.nama
+      if (!employeeMap.has(nama)) {
+        employeeMap.set(nama, {
+          nama,
+          totalHadir: 0,
+          totalTerlambat: 0,
+          totalAlpha: 0,
+          totalIzin: 0,
+          totalSakit: 0,
+          jamMasukTotal: 0,
+          jamMasukCount: 0,
+          totalWorkingDays: workingDays,
+        })
       }
-    } else {
-      if (bulan === 11) {
-        setBulan(0)
-        setTahun(tahun + 1)
-      } else {
-        setBulan(bulan + 1)
+
+      const employee = employeeMap.get(nama)
+
+      switch (record.status.toLowerCase()) {
+        case "hadir":
+          employee.totalHadir++
+          if (record.jam_masuk) {
+            const jamMasuk = new Date(`2000-01-01 ${record.jam_masuk}`)
+            const jamStandar = new Date(`2000-01-01 08:00:00`)
+            if (jamMasuk > jamStandar) {
+              employee.totalTerlambat++
+            }
+            employee.jamMasukTotal += jamMasuk.getHours() + jamMasuk.getMinutes() / 60
+            employee.jamMasukCount++
+          }
+          break
+        case "alpha":
+          employee.totalAlpha++
+          break
+        case "izin":
+          employee.totalIzin++
+          break
+        case "sakit":
+          employee.totalSakit++
+          break
       }
-    }
-  }
+    })
 
-  const goToCurrentMonth = () => {
-    const now = new Date()
-    setBulan(now.getMonth())
-    setTahun(now.getFullYear())
-  }
+    const statsArray: EmployeeStats[] = Array.from(employeeMap.values()).map((emp) => {
+      const persentaseKehadiran = workingDays > 0 ? (emp.totalHadir / workingDays) * 100 : 0
+      const avgJamMasuk =
+        emp.jamMasukCount > 0
+          ? `${Math.floor(emp.jamMasukTotal / emp.jamMasukCount)}:${String(Math.round(((emp.jamMasukTotal / emp.jamMasukCount) % 1) * 60)).padStart(2, "0")}`
+          : "00:00"
 
-  const getGreeting = () => {
-    const hour = currentTime.getHours()
-    if (hour < 12) return "Selamat Pagi"
-    if (hour < 15) return "Selamat Siang"
-    if (hour < 18) return "Selamat Sore"
-    return "Selamat Malam"
-  }
+      // Multi-criteria performance scoring
+      const attendanceScore = persentaseKehadiran * 0.4 // 40% weight
+      const punctualityScore =
+        emp.totalHadir > 0 ? ((emp.totalHadir - emp.totalTerlambat) / emp.totalHadir) * 100 * 0.3 : 0 // 30% weight
+      const consistencyScore = ((workingDays - emp.totalAlpha) / workingDays) * 100 * 0.3 // 30% weight
 
-  const getPerformanceColor = (percentage: number) => {
-    if (percentage >= 90) return "#10b981"
-    if (percentage >= 80) return "#3b82f6"
-    if (percentage >= 70) return "#f59e0b"
-    return "#ef4444"
-  }
+      const performanceScore = attendanceScore + punctualityScore + consistencyScore
 
-  const getPerformanceStatus = (percentage: number) => {
-    if (percentage >= 90) return "EXCELLENT"
-    if (percentage >= 80) return "GOOD"
-    if (percentage >= 70) return "FAIR"
-    return "POOR"
-  }
-
-  const totalRemaja = rekap.length
-  const avgKehadiran =
-    rekap.length > 0 ? Math.round(rekap.reduce((sum, item) => sum + item.persentaseHadir, 0) / rekap.length) : 0
-
-  // Ganti bagian perhitungan topPerformer dengan sistem ranking yang lebih adil
-  const getTopPerformerWithReason = () => {
-    if (rekap.length === 0) return null
-
-    // Cari semua dengan persentase tertinggi
-    const maxPercentage = Math.max(...rekap.map((item) => item.persentaseHadir))
-    const topCandidates = rekap.filter((item) => item.persentaseHadir === maxPercentage)
-
-    if (topCandidates.length === 1) {
       return {
-        ...topCandidates[0],
-        reason: `Persentase tertinggi ${maxPercentage}%`,
-        reasonDetail: "Unggul dalam persentase kehadiran",
+        ...emp,
+        persentaseKehadiran: Math.round(persentaseKehadiran * 100) / 100,
+        avgJamMasuk,
+        performanceScore: Math.round(performanceScore * 100) / 100,
+        rank: 0, // Will be set after sorting
       }
-    }
+    })
 
-    // Jika ada tie, gunakan total hari hadir sebagai tie-breaker
-    const maxHadir = Math.max(...topCandidates.map((item) => item.jumlahHadir))
-    const finalCandidates = topCandidates.filter((item) => item.jumlahHadir === maxHadir)
-
-    if (finalCandidates.length === 1) {
-      return {
-        ...finalCandidates[0],
-        reason: `${maxPercentage}% + ${maxHadir} hari hadir terbanyak`,
-        reasonDetail: `Dari ${topCandidates.length} orang dengan ${maxPercentage}%, unggul dengan ${maxHadir} hari hadir`,
+    // Sort by performance score (descending) and set ranks
+    statsArray.sort((a, b) => {
+      if (b.performanceScore !== a.performanceScore) {
+        return b.performanceScore - a.performanceScore
       }
-    }
+      // Tie-breaker 1: Higher attendance percentage
+      if (b.persentaseKehadiran !== a.persentaseKehadiran) {
+        return b.persentaseKehadiran - a.persentaseKehadiran
+      }
+      // Tie-breaker 2: Lower tardiness
+      if (a.totalTerlambat !== b.totalTerlambat) {
+        return a.totalTerlambat - b.totalTerlambat
+      }
+      // Tie-breaker 3: Alphabetical order
+      return a.nama.localeCompare(b.nama)
+    })
 
-    // Jika masih tie, ambil yang pertama (berdasarkan urutan alfabetis)
-    const winner = finalCandidates[0]
-    return {
-      ...winner,
-      reason: `${maxPercentage}% + ${maxHadir} hari (urutan alfabetis)`,
-      reasonDetail: `Dari ${finalCandidates.length} orang dengan performa identik, dipilih berdasarkan urutan alfabetis`,
+    // Assign ranks
+    statsArray.forEach((emp, index) => {
+      emp.rank = index + 1
+    })
+
+    setEmployeeStats(statsArray)
+  }, [selectedMonth, selectedYear])
+
+  useEffect(() => {
+    if (selectedMonth && selectedYear) {
+      fetchAttendanceData()
     }
+  }, [selectedMonth, selectedYear, fetchAttendanceData])
+
+  const getTopPerformer = () => {
+    if (employeeStats.length === 0) return null
+    return employeeStats[0]
   }
 
-  const topPerformerData = getTopPerformerWithReason()
+  const getTopPerformerExplanation = () => {
+    const topPerformer = getTopPerformer()
+    if (!topPerformer) return ""
 
-  const isCurrentMonth = bulan === new Date().getMonth() && tahun === new Date().getFullYear()
+    const reasons = []
+    reasons.push(`Skor Performa: ${topPerformer.performanceScore}`)
+    reasons.push(`Kehadiran: ${topPerformer.persentaseKehadiran}%`)
+    reasons.push(`Keterlambatan: ${topPerformer.totalTerlambat} hari`)
+
+    return `Dipilih berdasarkan: ${reasons.join(", ")}`
+  }
+
+  const monthNames = [
+    "Januari",
+    "Februari",
+    "Maret",
+    "April",
+    "Mei",
+    "Juni",
+    "Juli",
+    "Agustus",
+    "September",
+    "Oktober",
+    "November",
+    "Desember",
+  ]
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Memuat data...</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: `
-          radial-gradient(circle at 20% 80%, rgba(120, 119, 198, 0.3) 0%, transparent 50%),
-          radial-gradient(circle at 80% 20%, rgba(255, 119, 198, 0.3) 0%, transparent 50%),
-          radial-gradient(circle at 40% 40%, rgba(120, 219, 255, 0.3) 0%, transparent 50%),
-          linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%)
-        `,
-        position: "relative",
-        overflow: "hidden",
-      }}
-    >
-      {/* Floating Background Elements */}
-      <div
-        style={{
-          position: "fixed",
-          top: "10%",
-          left: "5%",
-          width: "300px",
-          height: "300px",
-          background: "radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%)",
-          borderRadius: "50%",
-          animation: "float 6s ease-in-out infinite",
-          zIndex: 0,
-        }}
-      />
-      <div
-        style={{
-          position: "fixed",
-          top: "60%",
-          right: "10%",
-          width: "200px",
-          height: "200px",
-          background: "radial-gradient(circle, rgba(255,255,255,0.08) 0%, transparent 70%)",
-          borderRadius: "50%",
-          animation: "float 8s ease-in-out infinite reverse",
-          zIndex: 0,
-        }}
-      />
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
+      {/* Header */}
+      <div className="bg-white shadow-lg border-b-4 border-blue-600">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">📊 Dashboard Presensi</h1>
+              <p className="text-sm sm:text-base text-gray-600 mt-1">MUMI BP KULON - Monitoring Kehadiran Karyawan</p>
+            </div>
 
-      {/* Ultra Modern Navbar */}
-      <nav
-        style={{
-          background: scrollY > 50 ? "rgba(255, 255, 255, 0.25)" : "rgba(255, 255, 255, 0.15)",
-          backdropFilter: "blur(30px)",
-          borderBottom: `1px solid rgba(255, 255, 255, ${scrollY > 50 ? 0.4 : 0.2})`,
-          position: "fixed",
-          top: 0,
-          left: 0,
-          right: 0,
-          zIndex: 1000,
-          boxShadow: scrollY > 50 ? "0 20px 40px rgba(0, 0, 0, 0.15)" : "0 8px 32px rgba(0, 0, 0, 0.1)",
-          transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-          transform: scrollY > 100 ? "translateY(0)" : "translateY(0)",
-        }}
-      >
-        <div style={{ maxWidth: "1400px", margin: "0 auto", padding: "0 24px" }}>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              height: "80px",
-              gap: "20px",
-            }}
-          >
-            {/* Logo & Title */}
-            <div style={{ display: "flex", alignItems: "center", gap: "16px", flex: "1", minWidth: "0" }}>
-              <div
-                style={{
-                  width: "60px",
-                  height: "60px",
-                  background: "linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%)",
-                  borderRadius: "20px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: "28px",
-                  boxShadow: "0 10px 30px rgba(102, 126, 234, 0.4)",
-                  flexShrink: 0,
-                  position: "relative",
-                  overflow: "hidden",
-                }}
+            {/* Month/Year Selector */}
+            <div className="flex flex-col sm:flex-row gap-2 sm:gap-4">
+              <select
+                value={selectedMonth}
+                onChange={(e) => setSelectedMonth(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
               >
-                <div
-                  style={{
-                    position: "absolute",
-                    inset: 0,
-                    background: "linear-gradient(45deg, transparent 30%, rgba(255,255,255,0.2) 50%, transparent 70%)",
-                    animation: "shimmer 3s infinite",
-                  }}
-                />
-                🕌
-              </div>
-              <div style={{ minWidth: "0", flex: "1" }}>
-                <h1
-                  style={{
-                    fontSize: "clamp(20px, 4vw, 28px)",
-                    fontWeight: "900",
-                    color: "white",
-                    margin: 0,
-                    lineHeight: "1.2",
-                    background: "linear-gradient(135deg, #ffffff 0%, #f0f9ff 100%)",
-                    WebkitBackgroundClip: "text",
-                    WebkitTextFillColor: "transparent",
-                    textShadow: "0 2px 10px rgba(0,0,0,0.3)",
-                    letterSpacing: "0.5px",
-                  }}
-                >
-                  MUMI BP KULON
-                </h1>
-                <p
-                  className="hidden sm:block"
-                  style={{
-                    color: "rgba(255, 255, 255, 0.9)",
-                    fontSize: "14px",
-                    margin: 0,
-                    fontWeight: "500",
-                  }}
-                >
-                  Dashboard Presensi Digital
-                </p>
-              </div>
-            </div>
-
-            {/* Time & Date */}
-            <div style={{ display: "flex", alignItems: "center", gap: "12px", flexShrink: 0 }}>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "12px",
-                  background: "rgba(255, 255, 255, 0.2)",
-                  backdropFilter: "blur(20px)",
-                  borderRadius: "16px",
-                  padding: "12px 16px",
-                  border: "1px solid rgba(255, 255, 255, 0.3)",
-                  boxShadow: "0 8px 32px rgba(0, 0, 0, 0.1)",
-                }}
-              >
-                <div
-                  style={{
-                    width: "40px",
-                    height: "40px",
-                    background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
-                    borderRadius: "12px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: "18px",
-                    boxShadow: "0 4px 16px rgba(16, 185, 129, 0.3)",
-                  }}
-                >
-                  🕐
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  <p style={{ color: "white", fontWeight: "bold", fontSize: "16px", margin: 0 }}>
-                    {currentTime.toLocaleTimeString("id-ID", {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </p>
-                  <p
-                    className="hidden md:block"
-                    style={{
-                      color: "rgba(255, 255, 255, 0.8)",
-                      fontSize: "12px",
-                      margin: 0,
-                    }}
-                  >
-                    {getGreeting()}
-                  </p>
-                </div>
-              </div>
-
-              <div
-                className="hidden sm:flex"
-                style={{
-                  background: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)",
-                  borderRadius: "16px",
-                  padding: "12px 16px",
-                  boxShadow: "0 8px 32px rgba(245, 158, 11, 0.3)",
-                  alignItems: "center",
-                  gap: "8px",
-                }}
-              >
-                <span style={{ fontSize: "16px" }}>📅</span>
-                <span style={{ color: "white", fontWeight: "bold", fontSize: "14px" }}>
-                  {new Date().toLocaleDateString("id-ID", {
-                    day: "numeric",
-                    month: "short",
-                  })}
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </nav>
-
-      <div
-        style={{ maxWidth: "1400px", margin: "0 auto", padding: "120px 24px 40px", position: "relative", zIndex: 1 }}
-      >
-        {/* Ultra Modern Stats Cards */}
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-            gap: "32px",
-            marginBottom: "48px",
-          }}
-        >
-          {/* Hadir Hari Ini Card */}
-          <div
-            className="stats-card"
-            style={{
-              background: "rgba(255, 255, 255, 0.1)",
-              backdropFilter: "blur(30px)",
-              borderRadius: "28px",
-              padding: "32px",
-              border: "1px solid rgba(255, 255, 255, 0.2)",
-              boxShadow: "0 25px 50px rgba(0, 0, 0, 0.1)",
-              cursor: "pointer",
-              transition: "all 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
-              position: "relative",
-              overflow: "hidden",
-              transform: "translateY(0)",
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = "translateY(-12px) scale(1.02)"
-              e.currentTarget.style.boxShadow = "0 35px 70px rgba(0, 0, 0, 0.2)"
-              e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)"
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = "translateY(0) scale(1)"
-              e.currentTarget.style.boxShadow = "0 25px 50px rgba(0, 0, 0, 0.1)"
-              e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"
-            }}
-          >
-            <div
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                right: 0,
-                height: "4px",
-                background: "linear-gradient(90deg, #3b82f6, #1d4ed8, #3b82f6)",
-                backgroundSize: "200% 100%",
-                animation: "gradient-x 3s ease infinite",
-              }}
-            />
-
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "flex-start",
-                marginBottom: "24px",
-              }}
-            >
-              <div style={{ flex: 1 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "20px" }}>
-                  <div
-                    style={{
-                      width: "72px",
-                      height: "72px",
-                      background: "linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)",
-                      borderRadius: "24px",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: "32px",
-                      boxShadow: "0 12px 40px rgba(59, 130, 246, 0.4)",
-                      position: "relative",
-                    }}
-                  >
-                    <div
-                      style={{
-                        position: "absolute",
-                        inset: "2px",
-                        background: "linear-gradient(135deg, rgba(255,255,255,0.2) 0%, transparent 100%)",
-                        borderRadius: "22px",
-                      }}
-                    />
-                    👥
-                  </div>
-                  <div>
-                    <h3
-                      style={{
-                        color: "white",
-                        fontSize: "20px",
-                        fontWeight: "800",
-                        margin: 0,
-                        textShadow: "0 2px 10px rgba(0,0,0,0.3)",
-                      }}
-                    >
-                      HADIR HARI INI
-                    </h3>
-                    <p
-                      style={{
-                        color: "rgba(255, 255, 255, 0.8)",
-                        fontSize: "14px",
-                        margin: "4px 0 0 0",
-                        fontWeight: "500",
-                      }}
-                    >
-                      Real-time Update
-                    </p>
-                  </div>
-                </div>
-
-                <div style={{ display: "flex", alignItems: "baseline", gap: "12px", marginBottom: "16px" }}>
-                  <span
-                    style={{
-                      color: "white",
-                      fontSize: "56px",
-                      fontWeight: "900",
-                      lineHeight: "1",
-                      textShadow: "0 4px 20px rgba(0,0,0,0.3)",
-                    }}
-                  >
-                    {hadirHariIni.length}
-                  </span>
-                  <span style={{ color: "rgba(255, 255, 255, 0.8)", fontSize: "18px", fontWeight: "700" }}>REMAJA</span>
-                </div>
-
-                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                  <div
-                    style={{
-                      width: "12px",
-                      height: "12px",
-                      background: "#10b981",
-                      borderRadius: "50%",
-                      animation: "pulse-glow 2s infinite",
-                      boxShadow: "0 0 20px rgba(16, 185, 129, 0.6)",
-                    }}
-                  />
-                  <span
-                    style={{
-                      color: "#10b981",
-                      fontSize: "16px",
-                      fontWeight: "700",
-                      textShadow: "0 2px 10px rgba(0,0,0,0.3)",
-                    }}
-                  >
-                    LIVE UPDATE
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Total Terdaftar Card */}
-          <div
-            className="stats-card"
-            style={{
-              background: "rgba(255, 255, 255, 0.1)",
-              backdropFilter: "blur(30px)",
-              borderRadius: "28px",
-              padding: "32px",
-              border: "1px solid rgba(255, 255, 255, 0.2)",
-              boxShadow: "0 25px 50px rgba(0, 0, 0, 0.1)",
-              cursor: "pointer",
-              transition: "all 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
-              position: "relative",
-              overflow: "hidden",
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = "translateY(-12px) scale(1.02)"
-              e.currentTarget.style.boxShadow = "0 35px 70px rgba(0, 0, 0, 0.2)"
-              e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)"
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = "translateY(0) scale(1)"
-              e.currentTarget.style.boxShadow = "0 25px 50px rgba(0, 0, 0, 0.1)"
-              e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"
-            }}
-          >
-            <div
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                right: 0,
-                height: "4px",
-                background: "linear-gradient(90deg, #10b981, #059669, #10b981)",
-                backgroundSize: "200% 100%",
-                animation: "gradient-x 3s ease infinite",
-              }}
-            />
-
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "flex-start",
-                marginBottom: "24px",
-              }}
-            >
-              <div style={{ flex: 1 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "20px" }}>
-                  <div
-                    style={{
-                      width: "72px",
-                      height: "72px",
-                      background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
-                      borderRadius: "24px",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: "32px",
-                      boxShadow: "0 12px 40px rgba(16, 185, 129, 0.4)",
-                      position: "relative",
-                    }}
-                  >
-                    <div
-                      style={{
-                        position: "absolute",
-                        inset: "2px",
-                        background: "linear-gradient(135deg, rgba(255,255,255,0.2) 0%, transparent 100%)",
-                        borderRadius: "22px",
-                      }}
-                    />
-                    📊
-                  </div>
-                  <div>
-                    <h3
-                      style={{
-                        color: "white",
-                        fontSize: "20px",
-                        fontWeight: "800",
-                        margin: 0,
-                        textShadow: "0 2px 10px rgba(0,0,0,0.3)",
-                      }}
-                    >
-                      TOTAL TERDAFTAR
-                    </h3>
-                    <p
-                      style={{
-                        color: "rgba(255, 255, 255, 0.8)",
-                        fontSize: "14px",
-                        margin: "4px 0 0 0",
-                        fontWeight: "500",
-                      }}
-                    >
-                      {totalRemaja} Remaja Aktif
-                    </p>
-                  </div>
-                </div>
-
-                <div style={{ display: "flex", alignItems: "baseline", gap: "12px", marginBottom: "16px" }}>
-                  <span
-                    style={{
-                      color: "white",
-                      fontSize: "56px",
-                      fontWeight: "900",
-                      lineHeight: "1",
-                      textShadow: "0 4px 20px rgba(0,0,0,0.3)",
-                    }}
-                  >
-                    {totalRemaja}
-                  </span>
-                  <span style={{ color: "rgba(255, 255, 255, 0.8)", fontSize: "18px", fontWeight: "700" }}>REMAJA</span>
-                </div>
-
-                <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
-                  <span
-                    style={{
-                      color: "#10b981",
-                      fontSize: "16px",
-                      fontWeight: "700",
-                      textShadow: "0 2px 10px rgba(0,0,0,0.3)",
-                    }}
-                  >
-                    ✅ AKTIF TERDAFTAR
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Rata-rata Kehadiran Card */}
-          <div
-            className="stats-card"
-            style={{
-              background: "rgba(255, 255, 255, 0.1)",
-              backdropFilter: "blur(30px)",
-              borderRadius: "28px",
-              padding: "32px",
-              border: "1px solid rgba(255, 255, 255, 0.2)",
-              boxShadow: "0 25px 50px rgba(0, 0, 0, 0.1)",
-              cursor: "pointer",
-              transition: "all 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
-              position: "relative",
-              overflow: "hidden",
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = "translateY(-12px) scale(1.02)"
-              e.currentTarget.style.boxShadow = "0 35px 70px rgba(0, 0, 0, 0.2)"
-              e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)"
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = "translateY(0) scale(1)"
-              e.currentTarget.style.boxShadow = "0 25px 50px rgba(0, 0, 0, 0.1)"
-              e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"
-            }}
-          >
-            <div
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                right: 0,
-                height: "4px",
-                background: "linear-gradient(90deg, #a855f7, #7c3aed, #a855f7)",
-                backgroundSize: "200% 100%",
-                animation: "gradient-x 3s ease infinite",
-              }}
-            />
-
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "flex-start",
-                marginBottom: "24px",
-              }}
-            >
-              <div style={{ flex: 1 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "20px" }}>
-                  <div
-                    style={{
-                      width: "72px",
-                      height: "72px",
-                      background: "linear-gradient(135deg, #a855f7 0%, #7c3aed 100%)",
-                      borderRadius: "24px",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: "32px",
-                      boxShadow: "0 12px 40px rgba(168, 85, 247, 0.4)",
-                      position: "relative",
-                    }}
-                  >
-                    <div
-                      style={{
-                        position: "absolute",
-                        inset: "2px",
-                        background: "linear-gradient(135deg, rgba(255,255,255,0.2) 0%, transparent 100%)",
-                        borderRadius: "22px",
-                      }}
-                    />
-                    🎯
-                  </div>
-                  <div>
-                    <h3
-                      style={{
-                        color: "white",
-                        fontSize: "20px",
-                        fontWeight: "800",
-                        margin: 0,
-                        textShadow: "0 2px 10px rgba(0,0,0,0.3)",
-                      }}
-                    >
-                      RATA-RATA KEHADIRAN
-                    </h3>
-                    <p
-                      style={{
-                        color: "rgba(255, 255, 255, 0.8)",
-                        fontSize: "14px",
-                        margin: "4px 0 0 0",
-                        fontWeight: "500",
-                      }}
-                    >
-                      {bulanNama} {tahun}
-                    </p>
-                  </div>
-                </div>
-
-                <div style={{ display: "flex", alignItems: "baseline", gap: "12px", marginBottom: "16px" }}>
-                  <span
-                    style={{
-                      color: "white",
-                      fontSize: "56px",
-                      fontWeight: "900",
-                      lineHeight: "1",
-                      textShadow: "0 4px 20px rgba(0,0,0,0.3)",
-                    }}
-                  >
-                    {avgKehadiran}
-                  </span>
-                  <span style={{ color: "rgba(255, 255, 255, 0.8)", fontSize: "28px", fontWeight: "700" }}>%</span>
-                </div>
-
-                <div style={{ marginTop: "16px" }}>
-                  <div
-                    style={{
-                      width: "100%",
-                      height: "12px",
-                      background: "rgba(255, 255, 255, 0.2)",
-                      borderRadius: "6px",
-                      overflow: "hidden",
-                      position: "relative",
-                    }}
-                  >
-                    <div
-                      style={{
-                        height: "100%",
-                        background: "linear-gradient(90deg, #a855f7, #7c3aed)",
-                        width: `${avgKehadiran}%`,
-                        borderRadius: "6px",
-                        transition: "width 2s cubic-bezier(0.4, 0, 0.2, 1)",
-                        boxShadow: "0 0 20px rgba(168, 85, 247, 0.5)",
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Top Performer Card */}
-          <div
-            className="stats-card"
-            style={{
-              background: "rgba(255, 255, 255, 0.1)",
-              backdropFilter: "blur(30px)",
-              borderRadius: "28px",
-              padding: "32px",
-              border: "1px solid rgba(255, 255, 255, 0.2)",
-              boxShadow: "0 25px 50px rgba(0, 0, 0, 0.1)",
-              cursor: "pointer",
-              transition: "all 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
-              position: "relative",
-              overflow: "hidden",
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.transform = "translateY(-12px) scale(1.02)"
-              e.currentTarget.style.boxShadow = "0 35px 70px rgba(0, 0, 0, 0.2)"
-              e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)"
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.transform = "translateY(0) scale(1)"
-              e.currentTarget.style.boxShadow = "0 25px 50px rgba(0, 0, 0, 0.1)"
-              e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"
-            }}
-          >
-            <div
-              style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                right: 0,
-                height: "4px",
-                background: "linear-gradient(90deg, #f59e0b, #d97706, #f59e0b)",
-                backgroundSize: "200% 100%",
-                animation: "gradient-x 3s ease infinite",
-              }}
-            />
-
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "flex-start",
-                marginBottom: "24px",
-              }}
-            >
-              <div style={{ flex: 1 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "16px", marginBottom: "20px" }}>
-                  <div
-                    style={{
-                      width: "72px",
-                      height: "72px",
-                      background: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)",
-                      borderRadius: "24px",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: "32px",
-                      boxShadow: "0 12px 40px rgba(245, 158, 11, 0.4)",
-                      position: "relative",
-                    }}
-                  >
-                    <div
-                      style={{
-                        position: "absolute",
-                        inset: "2px",
-                        background: "linear-gradient(135deg, rgba(255,255,255,0.2) 0%, transparent 100%)",
-                        borderRadius: "22px",
-                      }}
-                    />
-                    🏆
-                  </div>
-                  <div>
-                    <h3
-                      style={{
-                        color: "white",
-                        fontSize: "20px",
-                        fontWeight: "800",
-                        margin: 0,
-                        textShadow: "0 2px 10px rgba(0,0,0,0.3)",
-                      }}
-                    >
-                      TOP PERFORMER
-                    </h3>
-                    <p
-                      style={{
-                        color: "rgba(255, 255, 255, 0.8)",
-                        fontSize: "14px",
-                        margin: "4px 0 0 0",
-                        fontWeight: "500",
-                      }}
-                    >
-                      Terbaik Bulan Ini
-                    </p>
-                  </div>
-                </div>
-
-                {/* Top Performer Card - Update bagian content */}
-                <div style={{ marginBottom: "12px" }}>
-                  <span
-                    style={{
-                      color: "white",
-                      fontSize: "22px",
-                      fontWeight: "bold",
-                      display: "block",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                      textShadow: "0 2px 10px rgba(0,0,0,0.3)",
-                    }}
-                  >
-                    {topPerformerData?.nama || "BELUM ADA DATA"}
-                  </span>
-                  {topPerformerData && (
-                    <div style={{ marginTop: "8px" }}>
-                      <div
-                        style={{
-                          background: "rgba(255, 255, 255, 0.15)",
-                          borderRadius: "12px",
-                          padding: "8px 12px",
-                          border: "1px solid rgba(255, 255, 255, 0.2)",
-                          marginBottom: "6px",
-                        }}
-                      >
-                        <span
-                          style={{
-                            color: "rgba(255, 255, 255, 0.9)",
-                            fontSize: "12px",
-                            fontWeight: "600",
-                            display: "block",
-                            lineHeight: "1.3",
-                          }}
-                        >
-                          🏆 {topPerformerData.reason}
-                        </span>
-                      </div>
-                      <span
-                        style={{
-                          color: "rgba(255, 255, 255, 0.8)",
-                          fontSize: "11px",
-                          fontWeight: "500",
-                          lineHeight: "1.3",
-                          display: "block",
-                        }}
-                      >
-                        {topPerformerData.reasonDetail}
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <span
-                    style={{
-                      color: "white",
-                      fontSize: "32px",
-                      fontWeight: "900",
-                      textShadow: "0 2px 10px rgba(0,0,0,0.3)",
-                    }}
-                  >
-                    {topPerformerData?.persentaseHadir || 0}%
-                  </span>
-                  <span style={{ fontSize: "24px", animation: "bounce 2s infinite" }}>⭐</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Ultra Modern Kehadiran Hari Ini */}
-        <div
-          style={{
-            background: "rgba(255, 255, 255, 0.1)",
-            backdropFilter: "blur(30px)",
-            borderRadius: "32px",
-            border: "1px solid rgba(255, 255, 255, 0.2)",
-            boxShadow: "0 25px 50px rgba(0, 0, 0, 0.1)",
-            marginBottom: "48px",
-            overflow: "hidden",
-            position: "relative",
-          }}
-        >
-          <div
-            style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              right: 0,
-              height: "6px",
-              background: "linear-gradient(90deg, #3b82f6, #1d4ed8, #3b82f6)",
-              backgroundSize: "200% 100%",
-              animation: "gradient-x 3s ease infinite",
-            }}
-          />
-
-          <div
-            style={{
-              background: "linear-gradient(135deg, rgba(59, 130, 246, 0.9) 0%, rgba(29, 78, 216, 0.9) 100%)",
-              padding: "32px",
-              borderBottom: "1px solid rgba(255, 255, 255, 0.2)",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                flexWrap: "wrap",
-                gap: "20px",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
-                <div
-                  style={{
-                    width: "64px",
-                    height: "64px",
-                    background: "rgba(255, 255, 255, 0.2)",
-                    borderRadius: "20px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: "28px",
-                    backdropFilter: "blur(10px)",
-                  }}
-                >
-                  👥
-                </div>
-                <div>
-                  <h2
-                    style={{
-                      color: "white",
-                      fontSize: "32px",
-                      fontWeight: "900",
-                      margin: 0,
-                      textShadow: "0 4px 20px rgba(0,0,0,0.3)",
-                    }}
-                  >
-                    KEHADIRAN HARI INI
-                  </h2>
-                  <p
-                    style={{
-                      color: "rgba(255, 255, 255, 0.9)",
-                      fontSize: "16px",
-                      margin: "8px 0 0 0",
-                      fontWeight: "500",
-                    }}
-                  >
-                    {new Date().toLocaleDateString("id-ID", {
-                      weekday: "long",
-                      day: "numeric",
-                      month: "long",
-                      year: "numeric",
-                    })}
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={fetchHadirHariIni}
-                disabled={isRefreshing}
-                style={{
-                  background: "rgba(255, 255, 255, 0.2)",
-                  backdropFilter: "blur(10px)",
-                  border: "1px solid rgba(255, 255, 255, 0.3)",
-                  color: "white",
-                  padding: "16px 24px",
-                  borderRadius: "16px",
-                  cursor: "pointer",
-                  fontSize: "16px",
-                  fontWeight: "700",
-                  transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                  transform: isRefreshing ? "scale(0.95)" : "scale(1)",
-                }}
-                onMouseEnter={(e) => {
-                  if (!isRefreshing) {
-                    e.currentTarget.style.background = "rgba(255, 255, 255, 0.3)"
-                    e.currentTarget.style.transform = "scale(1.05)"
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "rgba(255, 255, 255, 0.2)"
-                  e.currentTarget.style.transform = isRefreshing ? "scale(0.95)" : "scale(1)"
-                }}
-              >
-                <span
-                  style={{
-                    display: "inline-block",
-                    animation: isRefreshing ? "spin 1s linear infinite" : "none",
-                    marginRight: "8px",
-                  }}
-                >
-                  🔄
-                </span>
-                {isRefreshing ? "REFRESHING..." : "REFRESH DATA"}
-              </button>
-            </div>
-          </div>
-
-          <div style={{ padding: "40px" }}>
-            {hadirHariIni.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "80px 0" }}>
-                <div
-                  style={{
-                    width: "120px",
-                    height: "120px",
-                    background: "rgba(59, 130, 246, 0.1)",
-                    borderRadius: "50%",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    margin: "0 auto 32px",
-                    fontSize: "60px",
-                    animation: "pulse-glow 3s infinite",
-                  }}
-                >
-                  👥
-                </div>
-                <p
-                  style={{
-                    color: "rgba(255, 255, 255, 0.9)",
-                    fontSize: "24px",
-                    margin: "0 0 12px 0",
-                    fontWeight: "700",
-                    textShadow: "0 2px 10px rgba(0,0,0,0.3)",
-                  }}
-                >
-                  BELUM ADA YANG HADIR HARI INI
-                </p>
-                <p style={{ color: "rgba(255, 255, 255, 0.7)", margin: 0, fontSize: "16px" }}>
-                  Data akan muncul setelah ada yang melakukan presensi
-                </p>
-              </div>
-            ) : (
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(360px, 1fr))",
-                  gap: "32px",
-                }}
-              >
-                {hadirHariIni.map((person, index) => (
-                  <div
-                    key={`${person.username}-${index}`}
-                    style={{
-                      background: "rgba(255, 255, 255, 0.1)",
-                      backdropFilter: "blur(20px)",
-                      borderRadius: "24px",
-                      padding: "32px",
-                      border: "1px solid rgba(255, 255, 255, 0.2)",
-                      transition: "all 0.4s cubic-bezier(0.4, 0, 0.2, 1)",
-                      cursor: "pointer",
-                      position: "relative",
-                      overflow: "hidden",
-                      animation: `slideInUp 0.6s ease-out forwards ${index * 100}ms`,
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.transform = "scale(1.05) translateY(-8px)"
-                      e.currentTarget.style.background = "rgba(255, 255, 255, 0.15)"
-                      e.currentTarget.style.boxShadow = "0 20px 40px rgba(0, 0, 0, 0.2)"
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.transform = "scale(1) translateY(0)"
-                      e.currentTarget.style.background = "rgba(255, 255, 255, 0.1)"
-                      e.currentTarget.style.boxShadow = "none"
-                    }}
-                  >
-                    <div
-                      style={{
-                        position: "absolute",
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        height: "3px",
-                        background: "linear-gradient(90deg, #10b981, #059669)",
-                      }}
-                    />
-
-                    <div
-                      style={{
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "flex-start",
-                        marginBottom: "24px",
-                      }}
-                    >
-                      <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
-                        <div style={{ position: "relative" }}>
-                          <div
-                            style={{
-                              width: "72px",
-                              height: "72px",
-                              background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
-                              borderRadius: "50%",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              fontSize: "28px",
-                              color: "white",
-                              fontWeight: "bold",
-                              boxShadow: "0 8px 32px rgba(16, 185, 129, 0.4)",
-                              position: "relative",
-                            }}
-                          >
-                            <div
-                              style={{
-                                position: "absolute",
-                                inset: "2px",
-                                background: "linear-gradient(135deg, rgba(255,255,255,0.2) 0%, transparent 100%)",
-                                borderRadius: "50%",
-                              }}
-                            />
-                            {person.nama.charAt(0)}
-                          </div>
-                          <div
-                            style={{
-                              position: "absolute",
-                              top: "-6px",
-                              right: "-6px",
-                              width: "28px",
-                              height: "28px",
-                              background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
-                              borderRadius: "50%",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              fontSize: "16px",
-                              color: "white",
-                              boxShadow: "0 4px 16px rgba(16, 185, 129, 0.5)",
-                              animation: "bounce 2s infinite",
-                            }}
-                          >
-                            ✓
-                          </div>
-                        </div>
-                        <div>
-                          <p
-                            style={{
-                              color: "white",
-                              fontSize: "22px",
-                              fontWeight: "800",
-                              margin: 0,
-                              textShadow: "0 2px 10px rgba(0,0,0,0.3)",
-                            }}
-                          >
-                            {person.nama}
-                          </p>
-                          <div style={{ display: "flex", alignItems: "center", gap: "12px", marginTop: "8px" }}>
-                            <div
-                              style={{
-                                width: "12px",
-                                height: "12px",
-                                background: "#10b981",
-                                borderRadius: "50%",
-                                animation: "pulse-glow 2s infinite",
-                                boxShadow: "0 0 20px rgba(16, 185, 129, 0.6)",
-                              }}
-                            />
-                            <span
-                              style={{
-                                color: "#10b981",
-                                fontSize: "16px",
-                                fontWeight: "700",
-                                textShadow: "0 2px 10px rgba(0,0,0,0.3)",
-                              }}
-                            >
-                              HADIR
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                      <span style={{ fontSize: "32px", animation: "float 3s ease-in-out infinite" }}>✨</span>
-                    </div>
-
-                    <div
-                      style={{
-                        background: "rgba(16, 185, 129, 0.1)",
-                        backdropFilter: "blur(10px)",
-                        borderRadius: "16px",
-                        padding: "20px",
-                        border: "1px solid rgba(16, 185, 129, 0.2)",
-                      }}
-                    >
-                      <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-                        <div
-                          style={{
-                            width: "48px",
-                            height: "48px",
-                            background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
-                            borderRadius: "12px",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            fontSize: "20px",
-                          }}
-                        >
-                          ⏰
-                        </div>
-                        <div>
-                          <span
-                            style={{
-                              color: "rgba(255, 255, 255, 0.8)",
-                              fontSize: "14px",
-                              fontWeight: "600",
-                              display: "block",
-                              marginBottom: "4px",
-                            }}
-                          >
-                            JAM MASUK
-                          </span>
-                          <span
-                            style={{
-                              color: "white",
-                              fontWeight: "900",
-                              fontSize: "24px",
-                              textShadow: "0 2px 10px rgba(0,0,0,0.3)",
-                            }}
-                          >
-                            {person.jam_masuk}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+                {monthNames.map((month, index) => (
+                  <option key={index} value={String(index + 1).padStart(2, "0")}>
+                    {month}
+                  </option>
                 ))}
-              </div>
-            )}
-          </div>
-        </div>
+              </select>
 
-        {/* Ultra Modern Rekap Bulanan */}
-        <div
-          style={{
-            background: "rgba(255, 255, 255, 0.1)",
-            backdropFilter: "blur(30px)",
-            borderRadius: "32px",
-            border: "1px solid rgba(255, 255, 255, 0.2)",
-            boxShadow: "0 25px 50px rgba(0, 0, 0, 0.1)",
-            overflow: "hidden",
-            position: "relative",
-          }}
-        >
-          <div
-            style={{
-              position: "absolute",
-              top: 0,
-              left: 0,
-              right: 0,
-              height: "6px",
-              background: "linear-gradient(90deg, #a855f7, #7c3aed, #a855f7)",
-              backgroundSize: "200% 100%",
-              animation: "gradient-x 3s ease infinite",
-            }}
-          />
-
-          <div
-            style={{
-              background: "linear-gradient(135deg, rgba(168, 85, 247, 0.9) 0%, rgba(124, 58, 237, 0.9) 100%)",
-              padding: "32px",
-              borderBottom: "1px solid rgba(255, 255, 255, 0.2)",
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                flexWrap: "wrap",
-                gap: "20px",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
-                <div
-                  style={{
-                    width: "64px",
-                    height: "64px",
-                    background: "rgba(255, 255, 255, 0.2)",
-                    borderRadius: "20px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: "28px",
-                    backdropFilter: "blur(10px)",
-                  }}
-                >
-                  📊
-                </div>
-                <div>
-                  <h2
-                    style={{
-                      color: "white",
-                      fontSize: "32px",
-                      fontWeight: "900",
-                      margin: 0,
-                      textShadow: "0 4px 20px rgba(0,0,0,0.3)",
-                    }}
-                  >
-                    REKAP PRESENSI
-                  </h2>
-                  <p
-                    style={{
-                      color: "rgba(255, 255, 255, 0.9)",
-                      fontSize: "16px",
-                      margin: "8px 0 0 0",
-                      fontWeight: "500",
-                    }}
-                  >
-                    Statistik kehadiran bulanan (A-Z)
-                  </p>
-                </div>
-              </div>
-
-              <div style={{ display: "flex", alignItems: "center", gap: "20px", flexWrap: "wrap" }}>
-                {!isCurrentMonth && (
-                  <button
-                    onClick={goToCurrentMonth}
-                    style={{
-                      background: "rgba(255, 255, 255, 0.2)",
-                      backdropFilter: "blur(10px)",
-                      border: "1px solid rgba(255, 255, 255, 0.3)",
-                      color: "white",
-                      padding: "12px 20px",
-                      borderRadius: "16px",
-                      cursor: "pointer",
-                      fontSize: "14px",
-                      fontWeight: "700",
-                      transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = "rgba(255, 255, 255, 0.3)"
-                      e.currentTarget.style.transform = "scale(1.05)"
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = "rgba(255, 255, 255, 0.2)"
-                      e.currentTarget.style.transform = "scale(1)"
-                    }}
-                  >
-                    📅 BULAN INI
-                  </button>
-                )}
-
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "12px",
-                    background: "rgba(255, 255, 255, 0.1)",
-                    backdropFilter: "blur(10px)",
-                    borderRadius: "20px",
-                    padding: "12px",
-                    border: "1px solid rgba(255, 255, 255, 0.2)",
-                  }}
-                >
-                  <button
-                    onClick={() => navigateBulan("prev")}
-                    style={{
-                      width: "48px",
-                      height: "48px",
-                      background: "transparent",
-                      border: "none",
-                      color: "white",
-                      borderRadius: "12px",
-                      cursor: "pointer",
-                      fontSize: "20px",
-                      fontWeight: "bold",
-                      transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = "rgba(255, 255, 255, 0.2)"
-                      e.currentTarget.style.transform = "scale(1.1)"
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = "transparent"
-                      e.currentTarget.style.transform = "scale(1)"
-                    }}
-                  >
-                    ←
-                  </button>
-
-                  <div style={{ textAlign: "center", padding: "0 20px" }}>
-                    <p
-                      style={{
-                        color: "white",
-                        fontWeight: "900",
-                        fontSize: "20px",
-                        margin: 0,
-                        textShadow: "0 2px 10px rgba(0,0,0,0.3)",
-                      }}
-                    >
-                      {bulanNama.toUpperCase()}
-                    </p>
-                    <p style={{ color: "rgba(255, 255, 255, 0.8)", fontSize: "16px", margin: 0, fontWeight: "600" }}>
-                      {tahun}
-                    </p>
-                  </div>
-
-                  <button
-                    onClick={() => navigateBulan("next")}
-                    style={{
-                      width: "48px",
-                      height: "48px",
-                      background: "transparent",
-                      border: "none",
-                      color: "white",
-                      borderRadius: "12px",
-                      cursor: "pointer",
-                      fontSize: "20px",
-                      fontWeight: "bold",
-                      transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = "rgba(255, 255, 255, 0.2)"
-                      e.currentTarget.style.transform = "scale(1.1)"
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = "transparent"
-                      e.currentTarget.style.transform = "scale(1)"
-                    }}
-                  >
-                    →
-                  </button>
-                </div>
-              </div>
+              <select
+                value={selectedYear}
+                onChange={(e) => setSelectedYear(e.target.value)}
+                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+              >
+                {[2023, 2024, 2025].map((year) => (
+                  <option key={year} value={year}>
+                    {year}
+                  </option>
+                ))}
+              </select>
             </div>
-          </div>
-
-          <div style={{ padding: "40px" }}>
-            {rekap.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "80px 0" }}>
-                <div
-                  style={{
-                    width: "120px",
-                    height: "120px",
-                    background: "rgba(168, 85, 247, 0.1)",
-                    borderRadius: "50%",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    margin: "0 auto 32px",
-                    fontSize: "60px",
-                    animation: "pulse-glow 3s infinite",
-                  }}
-                >
-                  📊
-                </div>
-                <p
-                  style={{
-                    color: "rgba(255, 255, 255, 0.9)",
-                    fontSize: "24px",
-                    margin: "0 0 12px 0",
-                    fontWeight: "700",
-                    textShadow: "0 2px 10px rgba(0,0,0,0.3)",
-                  }}
-                >
-                  TIDAK ADA DATA UNTUK {bulanNama.toUpperCase()} {tahun}
-                </p>
-                <p style={{ color: "rgba(255, 255, 255, 0.7)", margin: 0, fontSize: "16px" }}>
-                  Pilih bulan lain atau tunggu data presensi
-                </p>
-              </div>
-            ) : (
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse", minWidth: "900px" }}>
-                  <thead>
-                    <tr style={{ borderBottom: "3px solid rgba(255, 255, 255, 0.2)" }}>
-                      <th
-                        style={{
-                          textAlign: "left",
-                          padding: "24px",
-                          color: "white",
-                          fontSize: "18px",
-                          fontWeight: "900",
-                          background: "rgba(168, 85, 247, 0.1)",
-                          textShadow: "0 2px 10px rgba(0,0,0,0.3)",
-                        }}
-                      >
-                        👤 NAMA (A-Z)
-                      </th>
-                      <th
-                        style={{
-                          textAlign: "center",
-                          padding: "24px",
-                          color: "white",
-                          fontSize: "18px",
-                          fontWeight: "900",
-                          background: "rgba(16, 185, 129, 0.1)",
-                          textShadow: "0 2px 10px rgba(0,0,0,0.3)",
-                        }}
-                      >
-                        ✅ HADIR
-                      </th>
-                      <th
-                        style={{
-                          textAlign: "center",
-                          padding: "24px",
-                          color: "white",
-                          fontSize: "18px",
-                          fontWeight: "900",
-                          background: "rgba(239, 68, 68, 0.1)",
-                          textShadow: "0 2px 10px rgba(0,0,0,0.3)",
-                        }}
-                      >
-                        ❌ TIDAK HADIR
-                      </th>
-                      <th
-                        style={{
-                          textAlign: "center",
-                          padding: "24px",
-                          color: "white",
-                          fontSize: "18px",
-                          fontWeight: "900",
-                          background: "rgba(59, 130, 246, 0.1)",
-                          textShadow: "0 2px 10px rgba(0,0,0,0.3)",
-                        }}
-                      >
-                        📊 PERSENTASE
-                      </th>
-                      <th
-                        style={{
-                          textAlign: "center",
-                          padding: "24px",
-                          color: "white",
-                          fontSize: "18px",
-                          fontWeight: "900",
-                          background: "rgba(245, 158, 11, 0.1)",
-                          textShadow: "0 2px 10px rgba(0,0,0,0.3)",
-                        }}
-                      >
-                        🏆 STATUS
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rekap.map((item, index) => (
-                      <tr
-                        key={index}
-                        style={{
-                          borderBottom: "1px solid rgba(255, 255, 255, 0.1)",
-                          transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-                        }}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.background = "rgba(255, 255, 255, 0.05)"
-                          e.currentTarget.style.transform = "scale(1.01)"
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.background = "transparent"
-                          e.currentTarget.style.transform = "scale(1)"
-                        }}
-                      >
-                        <td style={{ padding: "24px" }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: "20px" }}>
-                            <div
-                              style={{
-                                width: "56px",
-                                height: "56px",
-                                background: "linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)",
-                                borderRadius: "50%",
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                color: "white",
-                                fontWeight: "bold",
-                                fontSize: "20px",
-                                boxShadow: "0 8px 32px rgba(59, 130, 246, 0.3)",
-                                position: "relative",
-                              }}
-                            >
-                              <div
-                                style={{
-                                  position: "absolute",
-                                  inset: "2px",
-                                  background: "linear-gradient(135deg, rgba(255,255,255,0.2) 0%, transparent 100%)",
-                                  borderRadius: "50%",
-                                }}
-                              />
-                              {item.nama.charAt(0)}
-                            </div>
-                            <span
-                              style={{
-                                color: "white",
-                                fontSize: "18px",
-                                fontWeight: "800",
-                                textShadow: "0 2px 10px rgba(0,0,0,0.3)",
-                              }}
-                            >
-                              {item.nama}
-                            </span>
-                          </div>
-                        </td>
-                        <td style={{ textAlign: "center", padding: "24px" }}>
-                          <div
-                            style={{
-                              display: "inline-flex",
-                              alignItems: "center",
-                              gap: "12px",
-                              background: "linear-gradient(135deg, #10b981 0%, #059669 100%)",
-                              color: "white",
-                              border: "2px solid rgba(255, 255, 255, 0.3)",
-                              padding: "16px 24px",
-                              borderRadius: "20px",
-                              fontSize: "20px",
-                              fontWeight: "900",
-                              minWidth: "100px",
-                              justifyContent: "center",
-                              boxShadow: "0 8px 32px rgba(16, 185, 129, 0.4)",
-                              transition: "all 0.3s ease",
-                              textShadow: "0 2px 10px rgba(0,0,0,0.3)",
-                            }}
-                          >
-                            <span style={{ fontSize: "18px" }}>✅</span>
-                            <span>{item.jumlahHadir}</span>
-                          </div>
-                        </td>
-                        <td style={{ textAlign: "center", padding: "24px" }}>
-                          <div
-                            style={{
-                              display: "inline-flex",
-                              alignItems: "center",
-                              gap: "12px",
-                              background: "linear-gradient(135deg, #ef4444 0%, #dc2626 100%)",
-                              color: "white",
-                              border: "2px solid rgba(255, 255, 255, 0.3)",
-                              padding: "16px 24px",
-                              borderRadius: "20px",
-                              fontSize: "20px",
-                              fontWeight: "900",
-                              minWidth: "100px",
-                              justifyContent: "center",
-                              boxShadow: "0 8px 32px rgba(239, 68, 68, 0.4)",
-                              transition: "all 0.3s ease",
-                              textShadow: "0 2px 10px rgba(0,0,0,0.3)",
-                            }}
-                          >
-                            <span style={{ fontSize: "18px" }}>❌</span>
-                            <span>{item.jumlahTidakHadir}</span>
-                          </div>
-                        </td>
-                        <td style={{ textAlign: "center", padding: "24px" }}>
-                          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "20px" }}>
-                            <div
-                              style={{
-                                height: "60px",
-                                width: "120px",
-                                background: `linear-gradient(135deg, ${getPerformanceColor(item.persentaseHadir)}, ${getPerformanceColor(item.persentaseHadir)}dd)`,
-                                borderRadius: "20px",
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                color: "white",
-                                fontWeight: "900",
-                                fontSize: "22px",
-                                boxShadow: `0 8px 32px ${getPerformanceColor(item.persentaseHadir)}33`,
-                                position: "relative",
-                                overflow: "hidden",
-                              }}
-                            >
-                              <div
-                                style={{
-                                  position: "absolute",
-                                  inset: "2px",
-                                  background: "linear-gradient(135deg, rgba(255,255,255,0.2) 0%, transparent 100%)",
-                                  borderRadius: "18px",
-                                }}
-                              />
-                              {item.persentaseHadir}%
-                            </div>
-                            <div
-                              style={{
-                                width: "140px",
-                                height: "20px",
-                                background: "rgba(255, 255, 255, 0.2)",
-                                borderRadius: "10px",
-                                overflow: "hidden",
-                                border: "1px solid rgba(255, 255, 255, 0.3)",
-                                position: "relative",
-                              }}
-                            >
-                              <div
-                                style={{
-                                  height: "100%",
-                                  background: `linear-gradient(90deg, ${getPerformanceColor(item.persentaseHadir)}, ${getPerformanceColor(item.persentaseHadir)}dd)`,
-                                  width: `${item.persentaseHadir}%`,
-                                  borderRadius: "10px",
-                                  transition: "width 2s cubic-bezier(0.4, 0, 0.2, 1)",
-                                  boxShadow: `0 0 20px ${getPerformanceColor(item.persentaseHadir)}66`,
-                                }}
-                              />
-                            </div>
-                          </div>
-                        </td>
-                        <td style={{ textAlign: "center", padding: "24px" }}>
-                          <div
-                            style={{
-                              display: "inline-flex",
-                              alignItems: "center",
-                              gap: "16px",
-                              padding: "16px 28px",
-                              borderRadius: "20px",
-                              background: `linear-gradient(135deg, ${getPerformanceColor(item.persentaseHadir)}, ${getPerformanceColor(item.persentaseHadir)}dd)`,
-                              color: "white",
-                              fontWeight: "900",
-                              fontSize: "18px",
-                              boxShadow: `0 8px 32px ${getPerformanceColor(item.persentaseHadir)}33`,
-                              minWidth: "160px",
-                              justifyContent: "center",
-                              position: "relative",
-                              overflow: "hidden",
-                            }}
-                          >
-                            <div
-                              style={{
-                                position: "absolute",
-                                inset: "2px",
-                                background: "linear-gradient(135deg, rgba(255,255,255,0.2) 0%, transparent 100%)",
-                                borderRadius: "18px",
-                              }}
-                            />
-                            <span style={{ fontSize: "24px", position: "relative", zIndex: 1 }}>
-                              {item.persentaseHadir >= 90
-                                ? "🏆"
-                                : item.persentaseHadir >= 80
-                                  ? "🎯"
-                                  : item.persentaseHadir >= 70
-                                    ? "📈"
-                                    : "📉"}
-                            </span>
-                            <span style={{ position: "relative", zIndex: 1 }}>
-                              {getPerformanceStatus(item.persentaseHadir)}
-                            </span>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
           </div>
         </div>
       </div>
 
-      <style jsx>{`
-        @keyframes float {
-          0%, 100% {
-            transform: translateY(0px);
-          }
-          50% {
-            transform: translateY(-20px);
-          }
-        }
-        
-        @keyframes pulse-glow {
-          0%, 100% {
-            opacity: 1;
-            box-shadow: 0 0 20px currentColor;
-          }
-          50% {
-            opacity: 0.7;
-            box-shadow: 0 0 40px currentColor;
-          }
-        }
-        
-        @keyframes gradient-x {
-          0%, 100% {
-            background-position: 0% 50%;
-          }
-          50% {
-            background-position: 100% 50%;
-          }
-        }
-        
-        @keyframes shimmer {
-          0% {
-            transform: translateX(-100%);
-          }
-          100% {
-            transform: translateX(100%);
-          }
-        }
-        
-        @keyframes slideInUp {
-          from {
-            opacity: 0;
-            transform: translateY(30px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-        
-        @keyframes spin {
-          from {
-            transform: rotate(0deg);
-          }
-          to {
-            transform: rotate(360deg);
-          }
-        }
-        
-        @keyframes bounce {
-          0%, 20%, 53%, 80%, 100% {
-            transform: translate3d(0,0,0);
-          }
-          40%, 43% {
-            transform: translate3d(0, -8px, 0);
-          }
-          70% {
-            transform: translate3d(0, -4px, 0);
-          }
-          90% {
-            transform: translate3d(0, -2px, 0);
-          }
-        }
-        
-        @media (max-width: 768px) {
-          table {
-            font-size: 14px;
-          }
-          
-          th, td {
-            padding: 16px 12px !important;
-          }
-          
-          .stats-card {
-            padding: 24px !important;
-          }
-          
-          h1 {
-            font-size: 20px !important;
-          }
-          
-          h2 {
-            font-size: 24px !important;
-          }
-        }
-        
-        @media (max-width: 480px) {
-          .stats-card {
-            padding: 20px !important;
-          }
-          
-          h1 {
-            font-size: 18px !important;
-          }
-          
-          h2 {
-            font-size: 20px !important;
-          }
-          
-          th, td {
-            padding: 12px 8px !important;
-            font-size: 12px !important;
-          }
-        }
-      `}</style>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
+        {/* Top Performer Card */}
+        {getTopPerformer() && (
+          <div className="bg-gradient-to-r from-yellow-400 to-orange-500 rounded-xl shadow-lg p-4 sm:p-6 mb-6 sm:mb-8 text-white">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <h2 className="text-lg sm:text-xl font-bold mb-2">🏆 Top Performer</h2>
+                <p className="text-xl sm:text-2xl font-bold">{getTopPerformer()?.nama}</p>
+                <p className="text-sm sm:text-base opacity-90 mt-1">
+                  Kehadiran: {getTopPerformer()?.persentaseKehadiran}% | Skor: {getTopPerformer()?.performanceScore}
+                </p>
+              </div>
+              <div className="text-xs sm:text-sm bg-white/20 rounded-lg p-3">
+                <p className="font-semibold mb-1">Kriteria Penilaian:</p>
+                <p>{getTopPerformerExplanation()}</p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Stats Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-6 sm:mb-8">
+          <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6 border-l-4 border-blue-500">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs sm:text-sm font-medium text-gray-600">Total Karyawan</p>
+                <p className="text-xl sm:text-2xl font-bold text-gray-900">{employeeStats.length}</p>
+              </div>
+              <div className="bg-blue-100 p-2 sm:p-3 rounded-full">
+                <span className="text-lg sm:text-xl">👥</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6 border-l-4 border-green-500">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs sm:text-sm font-medium text-gray-600">Rata-rata Kehadiran</p>
+                <p className="text-xl sm:text-2xl font-bold text-gray-900">
+                  {employeeStats.length > 0
+                    ? Math.round(
+                        employeeStats.reduce((acc, emp) => acc + emp.persentaseKehadiran, 0) / employeeStats.length,
+                      )
+                    : 0}
+                  %
+                </p>
+              </div>
+              <div className="bg-green-100 p-2 sm:p-3 rounded-full">
+                <span className="text-lg sm:text-xl">📈</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6 border-l-4 border-yellow-500">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs sm:text-sm font-medium text-gray-600">Total Keterlambatan</p>
+                <p className="text-xl sm:text-2xl font-bold text-gray-900">
+                  {employeeStats.reduce((acc, emp) => acc + emp.totalTerlambat, 0)}
+                </p>
+              </div>
+              <div className="bg-yellow-100 p-2 sm:p-3 rounded-full">
+                <span className="text-lg sm:text-xl">⏰</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl shadow-lg p-4 sm:p-6 border-l-4 border-red-500">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs sm:text-sm font-medium text-gray-600">Total Alpha</p>
+                <p className="text-xl sm:text-2xl font-bold text-gray-900">
+                  {employeeStats.reduce((acc, emp) => acc + emp.totalAlpha, 0)}
+                </p>
+              </div>
+              <div className="bg-red-100 p-2 sm:p-3 rounded-full">
+                <span className="text-lg sm:text-xl">❌</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Employee Statistics Table */}
+        <div className="bg-white rounded-xl shadow-lg overflow-hidden">
+          <div className="px-4 sm:px-6 py-4 border-b border-gray-200">
+            <h3 className="text-lg sm:text-xl font-semibold text-gray-900">
+              📋 Statistik Karyawan - {monthNames[Number.parseInt(selectedMonth) - 1]} {selectedYear}
+            </h3>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Rank
+                  </th>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Nama
+                  </th>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Skor
+                  </th>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Kehadiran
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Hadir
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Terlambat
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Alpha
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Izin
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Sakit
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Avg Masuk
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {employeeStats.map((employee, index) => (
+                  <tr key={employee.nama} className={index % 2 === 0 ? "bg-white" : "bg-gray-50"}>
+                    <td className="px-3 sm:px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-center">
+                        {employee.rank === 1 && <span className="text-lg mr-1">🥇</span>}
+                        {employee.rank === 2 && <span className="text-lg mr-1">🥈</span>}
+                        {employee.rank === 3 && <span className="text-lg mr-1">🥉</span>}
+                        <span className="text-sm font-medium text-gray-900">#{employee.rank}</span>
+                      </div>
+                    </td>
+                    <td className="px-3 sm:px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">{employee.nama}</div>
+                    </td>
+                    <td className="px-3 sm:px-6 py-4 whitespace-nowrap">
+                      <span className="inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">
+                        {employee.performanceScore}
+                      </span>
+                    </td>
+                    <td className="px-3 sm:px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-center">
+                        <div className="text-sm font-medium text-gray-900">{employee.persentaseKehadiran}%</div>
+                        <div className="ml-2 w-16 bg-gray-200 rounded-full h-2">
+                          <div
+                            className="bg-green-500 h-2 rounded-full"
+                            style={{ width: `${Math.min(employee.persentaseKehadiran, 100)}%` }}
+                          ></div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{employee.totalHadir}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{employee.totalTerlambat}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{employee.totalAlpha}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{employee.totalIzin}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{employee.totalSakit}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{employee.avgJamMasuk}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Recent Attendance Records */}
+        <div className="mt-6 sm:mt-8 bg-white rounded-xl shadow-lg overflow-hidden">
+          <div className="px-4 sm:px-6 py-4 border-b border-gray-200">
+            <h3 className="text-lg sm:text-xl font-semibold text-gray-900">📅 Data Presensi Terbaru</h3>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Nama
+                  </th>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Tanggal
+                  </th>
+                  <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Status
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Jam Masuk
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Jam Keluar
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Keterangan
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {attendanceData.slice(0, 10).map((record, index) => (
+                  <tr key={record.id} className={index % 2 === 0 ? "bg-white" : "bg-gray-50"}>
+                    <td className="px-3 sm:px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">{record.nama}</div>
+                    </td>
+                    <td className="px-3 sm:px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">
+                        {new Date(record.tanggal).toLocaleDateString("id-ID")}
+                      </div>
+                    </td>
+                    <td className="px-3 sm:px-6 py-4 whitespace-nowrap">
+                      <span
+                        className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                          record.status.toLowerCase() === "hadir"
+                            ? "bg-green-100 text-green-800"
+                            : record.status.toLowerCase() === "alpha"
+                              ? "bg-red-100 text-red-800"
+                              : record.status.toLowerCase() === "izin"
+                                ? "bg-yellow-100 text-yellow-800"
+                                : "bg-blue-100 text-blue-800"
+                        }`}
+                      >
+                        {record.status}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">{record.jam_masuk || "-"}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {record.jam_keluar || "-"}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {record.keterangan || "-"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }

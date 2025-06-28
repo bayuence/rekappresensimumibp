@@ -1,5 +1,5 @@
 "use client"
-import { useEffect, useState } from "react"
+import { useEffect, useState, useCallback } from "react"
 import { createClient } from "@supabase/supabase-js"
 
 // Supabase client menggunakan environment variables
@@ -30,20 +30,8 @@ export default function PresensiDashboard() {
   const [today, setToday] = useState("")
   const [currentTime, setCurrentTime] = useState(new Date())
   const [scrollY, setScrollY] = useState(0)
-  const [isMobile, setIsMobile] = useState(false)
-  
+
   const bulanNama = new Date(tahun, bulan).toLocaleString("id-ID", { month: "long" })
-
-  // Handle mobile detection safely
-  useEffect(() => {
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth <= 768)
-    }
-
-    checkMobile()
-    window.addEventListener("resize", checkMobile)
-    return () => window.removeEventListener("resize", checkMobile)
-  }, [])
 
   // Handle scroll for navbar
   useEffect(() => {
@@ -63,16 +51,8 @@ export default function PresensiDashboard() {
     setToday(now.toISOString().split("T")[0])
   }, [])
 
-  useEffect(() => {
+  const fetchHadirHariIni = useCallback(async () => {
     if (!today) return
-    fetchHadirHariIni()
-  }, [today])
-
-  useEffect(() => {
-    fetchRekap()
-  }, [bulan, tahun])
-
-  const fetchHadirHariIni = async () => {
     setIsRefreshing(true)
     try {
       const { data: hadirData, error } = await supabase
@@ -110,9 +90,9 @@ export default function PresensiDashboard() {
     } finally {
       setIsRefreshing(false)
     }
-  }
+  }, [today])
 
-  const fetchRekap = async () => {
+  const fetchRekap = useCallback(async () => {
     const startDate = new Date(tahun, bulan, 1).toISOString().split("T")[0]
     const endDate = new Date(tahun, bulan + 1, 0).toISOString().split("T")[0]
 
@@ -145,7 +125,15 @@ export default function PresensiDashboard() {
       console.error("Error fetching rekap:", error)
       setRekap([])
     }
-  }
+  }, [bulan, tahun])
+
+  useEffect(() => {
+    fetchHadirHariIni()
+  }, [fetchHadirHariIni])
+
+  useEffect(() => {
+    fetchRekap()
+  }, [fetchRekap])
 
   const navigateBulan = (direction: "prev" | "next") => {
     if (direction === "prev") {
@@ -197,11 +185,9 @@ export default function PresensiDashboard() {
   const avgKehadiran =
     rekap.length > 0 ? Math.round(rekap.reduce((sum, item) => sum + item.persentaseHadir, 0) / rekap.length) : 0
 
-  // Ganti bagian perhitungan topPerformer dengan sistem ranking yang lebih adil
   const getTopPerformerWithReason = () => {
     if (rekap.length === 0) return null
 
-    // Cari semua dengan persentase tertinggi
     const maxPercentage = Math.max(...rekap.map((item) => item.persentaseHadir))
     const topCandidates = rekap.filter((item) => item.persentaseHadir === maxPercentage)
 
@@ -213,7 +199,6 @@ export default function PresensiDashboard() {
       }
     }
 
-    // Jika ada tie, gunakan total hari hadir sebagai tie-breaker
     const maxHadir = Math.max(...topCandidates.map((item) => item.jumlahHadir))
     const finalCandidates = topCandidates.filter((item) => item.jumlahHadir === maxHadir)
 
@@ -225,7 +210,6 @@ export default function PresensiDashboard() {
       }
     }
 
-    // Jika masih tie, ambil yang pertama (berdasarkan urutan alfabetis)
     const winner = finalCandidates[0]
     return {
       ...winner,
@@ -1880,10 +1864,10 @@ export default function PresensiDashboard() {
                               {item.persentaseHadir >= 90
                                 ? "🏆"
                                 : item.persentaseHadir >= 80
-                                  ? "🎯"
-                                  : item.persentaseHadir >= 70
-                                    ? "📈"
-                                    : "📉"}
+                                ? "🎯"
+                                : item.persentaseHadir >= 70
+                                ? "📈"
+                                : "📉"}
                             </span>
                             <span style={{ position: "relative", zIndex: 1 }}>
                               {getPerformanceStatus(item.persentaseHadir)}

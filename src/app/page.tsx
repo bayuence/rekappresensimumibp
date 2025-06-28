@@ -2,11 +2,8 @@
 import { useEffect, useState } from "react"
 import { createClient } from "@supabase/supabase-js"
 
-// Supabase client
-const supabase = createClient(
-  "https://lotjsowqvlkfunocrbnd.supabase.co",
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxvdGpzb3dxdmxrZnVub2NyYm5kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDg4MzUxMzUsImV4cCI6MjA2NDQxMTEzNX0.JsvnBMTo4xbT2W9V4FZ0Odh3FDA20hnSg-pBpVUAanM",
-)
+// Supabase client menggunakan environment variables
+const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
 
 interface AbsensiRecord {
   username: string
@@ -33,8 +30,20 @@ export default function PresensiDashboard() {
   const [today, setToday] = useState("")
   const [currentTime, setCurrentTime] = useState(new Date())
   const [scrollY, setScrollY] = useState(0)
+  const [isMobile, setIsMobile] = useState(false)
 
   const bulanNama = new Date(tahun, bulan).toLocaleString("id-ID", { month: "long" })
+
+  // Handle mobile detection safely
+  useEffect(() => {
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth <= 768)
+    }
+
+    checkMobile()
+    window.addEventListener("resize", checkMobile)
+    return () => window.removeEventListener("resize", checkMobile)
+  }, [])
 
   // Handle scroll for navbar
   useEffect(() => {
@@ -343,12 +352,12 @@ export default function PresensiDashboard() {
                   MUMI BP KULON
                 </h1>
                 <p
+                  className="hidden sm:block"
                   style={{
                     color: "rgba(255, 255, 255, 0.9)",
                     fontSize: "14px",
                     margin: 0,
                     fontWeight: "500",
-                    display: window.innerWidth > 480 ? "block" : "none",
                   }}
                 >
                   Dashboard Presensi Digital
@@ -394,11 +403,11 @@ export default function PresensiDashboard() {
                     })}
                   </p>
                   <p
+                    className="hidden md:block"
                     style={{
                       color: "rgba(255, 255, 255, 0.8)",
                       fontSize: "12px",
                       margin: 0,
-                      display: window.innerWidth > 640 ? "block" : "none",
                     }}
                   >
                     {getGreeting()}
@@ -407,12 +416,12 @@ export default function PresensiDashboard() {
               </div>
 
               <div
+                className="hidden sm:flex"
                 style={{
                   background: "linear-gradient(135deg, #f59e0b 0%, #d97706 100%)",
                   borderRadius: "16px",
                   padding: "12px 16px",
                   boxShadow: "0 8px 32px rgba(245, 158, 11, 0.3)",
-                  display: window.innerWidth > 480 ? "flex" : "none",
                   alignItems: "center",
                   gap: "8px",
                 }}
